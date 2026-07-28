@@ -37,8 +37,11 @@ BEGIN
     WHERE transaction_id = NEW.transaction_id;
 
     IF total <> 0 THEN
+        -- ERRCODE puts this in SQLSTATE class 23 (integrity constraint violation) instead of
+        -- the generic P0001, so application code can catch it as what it actually is.
         RAISE EXCEPTION 'transaction % does not balance: entries sum to %',
-            NEW.transaction_id, total;
+            NEW.transaction_id, total
+            USING ERRCODE = 'check_violation';
     END IF;
 
     RETURN NULL;
@@ -58,7 +61,8 @@ EXECUTE FUNCTION assert_transaction_balances();
 -- transaction, never by editing history. that is what makes the ledger auditable.
 CREATE FUNCTION reject_entry_mutation() RETURNS TRIGGER AS $$
 BEGIN
-    RAISE EXCEPTION 'entries are append-only: % is not allowed', TG_OP;
+    RAISE EXCEPTION 'entries are append-only: % is not allowed', TG_OP
+        USING ERRCODE = 'restrict_violation';
 END;
 $$ LANGUAGE plpgsql;
 
