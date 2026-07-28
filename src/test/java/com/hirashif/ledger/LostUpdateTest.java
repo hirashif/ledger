@@ -73,10 +73,13 @@ class LostUpdateTest {
             assertThat(seenByA).isEqualTo(10000);
             assertThat(seenByB).isEqualTo(10000);
 
-            // each decides $80 is affordable, because on its own it is
+            // each decided $80 was affordable off that read, and both are about to act
+            // on it. a lands first and takes the balance down to $20.
             withdraw(a, "a pays bob 80");
-            withdraw(b, "b pays bob 80");
             a.commit();
+
+            // b never re-checks. it is still working from the $100 it read earlier.
+            withdraw(b, "b pays bob 80");
             b.commit();
         }
 
@@ -141,7 +144,7 @@ class LostUpdateTest {
 
     private long balance(Connection c, long accountId) throws Exception {
         try (PreparedStatement ps = c.prepareStatement(
-                "SELECT COALESCE(SUM(amount_minor), 0) FROM entries WHERE account_id = ?")) {
+                "SELECT balance_minor FROM accounts WHERE id = ?")) {
             ps.setLong(1, accountId);
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
@@ -164,7 +167,20 @@ class LostUpdateTest {
         insertEntry(c, transactionId, bob, 8000);
     }
 
+    // this connection is standing in for another instance of the service, so it has to
+    // maintain the cached balance the same way the service does
     private void insertEntry(Connection c, long transactionId, long accountId, long amount)
+            throws Exception {
+        writeEntry(c, transactionId, accountId, amount);
+        try (PreparedStatement ps = c.prepareStatement(
+                "UPDATE accounts SET balance_minor = balance_minor + ? WHERE id = ?")) {
+            ps.setLong(1, amount);
+            ps.setLong(2, accountId);
+            ps.executeUpdate();
+        }
+    }
+
+    private void writeEntry(Connection c, long transactionId, long accountId, long amount)
             throws Exception {
         try (PreparedStatement ps = c.prepareStatement(
                 "INSERT INTO entries (transaction_id, account_id, amount_minor) VALUES (?, ?, ?)",

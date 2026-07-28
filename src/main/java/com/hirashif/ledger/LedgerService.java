@@ -27,6 +27,9 @@ public class LedgerService {
             jdbc.update(
                     "INSERT INTO entries (transaction_id, account_id, amount_minor) VALUES (?, ?, ?)",
                     transactionId, entry.accountId(), entry.amountMinor());
+            // same transaction as the entry, so the cache cannot drift on this path
+            jdbc.update("UPDATE accounts SET balance_minor = balance_minor + ? WHERE id = ?",
+                    entry.amountMinor(), entry.accountId());
         }
 
         return transactionId;
@@ -78,7 +81,15 @@ public class LedgerService {
                 "SELECT allows_overdraft FROM accounts WHERE id = ?", Boolean.class, accountId));
     }
 
+    // the cached column
     public long balanceOf(long accountId) {
+        Long balance = jdbc.queryForObject(
+                "SELECT balance_minor FROM accounts WHERE id = ?", Long.class, accountId);
+        return balance == null ? 0L : balance;
+    }
+
+    // the truth, rebuilt from history. slower, and what reconciliation compares against.
+    public long recomputedBalanceOf(long accountId) {
         Long balance = jdbc.queryForObject(
                 "SELECT COALESCE(SUM(amount_minor), 0) FROM entries WHERE account_id = ?",
                 Long.class, accountId);
