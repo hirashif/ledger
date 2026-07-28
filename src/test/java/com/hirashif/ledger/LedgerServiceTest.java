@@ -37,7 +37,8 @@ class LedgerServiceTest {
     void setUp() {
         // truncate, not delete: the append-only trigger blocks DELETE on entries,
         // and row level triggers do not fire on truncate.
-        jdbc.execute("TRUNCATE entries, transactions, accounts RESTART IDENTITY CASCADE");
+        jdbc.execute("TRUNCATE idempotency_keys, entries, transactions, accounts "
+                + "RESTART IDENTITY CASCADE");
         alice = newAccount("alice");
         bob = newAccount("bob");
     }

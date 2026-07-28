@@ -32,6 +32,17 @@ public class LedgerService {
         return transactionId;
     }
 
+    // same as post, but claims the idempotency key in the same transaction.
+    // a duplicate key blows up the whole thing, which is the point.
+    @Transactional
+    public long postWithKey(String key, String requestHash, String description, List<Entry> entries) {
+        long transactionId = post(description, entries);
+        jdbc.update(
+                "INSERT INTO idempotency_keys (key, request_hash, transaction_id) VALUES (?, ?, ?)",
+                key, requestHash, transactionId);
+        return transactionId;
+    }
+
     public long balanceOf(long accountId) {
         Long balance = jdbc.queryForObject(
                 "SELECT COALESCE(SUM(amount_minor), 0) FROM entries WHERE account_id = ?",
