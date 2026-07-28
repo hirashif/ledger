@@ -14,11 +14,7 @@ public class LedgerService {
         this.jdbc = jdbc;
     }
 
-    /**
-     * Writes a transaction and all of its entries, or none of them.
-     * The database enforces the same zero-sum rule at commit time; validating here
-     * just fails fast with a useful message instead of a constraint violation.
-     */
+    // writes a transaction and all of its entries, or none of them
     @Transactional
     public long post(String description, List<Entry> entries) {
         validate(entries);
@@ -58,9 +54,9 @@ public class LedgerService {
                 throw new UnbalancedTransactionException(
                         "entry on account " + entry.accountId() + " moves nothing");
             }
+            // addExact throws instead of wrapping. a plain += lets amounts near
+            // Long.MAX_VALUE overflow back to zero and look balanced.
             try {
-                // addExact throws instead of silently wrapping. a plain += would let
-                // amounts near Long.MAX_VALUE overflow back around to zero and look balanced.
                 sum = Math.addExact(sum, entry.amountMinor());
             } catch (ArithmeticException overflow) {
                 throw new UnbalancedTransactionException(

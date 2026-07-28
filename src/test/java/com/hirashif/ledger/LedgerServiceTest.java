@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -16,7 +15,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-/** Runs against a real Postgres, so the schema constraints are under test too. */
+// runs against a real postgres so the schema constraints are under test too
 @SpringBootTest
 @Testcontainers
 class LedgerServiceTest {
@@ -36,9 +35,9 @@ class LedgerServiceTest {
 
     @BeforeEach
     void setUp() {
-        jdbc.update("DELETE FROM entries WHERE true");
-        jdbc.update("DELETE FROM transactions WHERE true");
-        jdbc.update("DELETE FROM accounts WHERE true");
+        // truncate, not delete: the append-only trigger blocks DELETE on entries,
+        // and row level triggers do not fire on truncate.
+        jdbc.execute("TRUNCATE entries, transactions, accounts RESTART IDENTITY CASCADE");
         alice = newAccount("alice");
         bob = newAccount("bob");
     }
@@ -50,8 +49,7 @@ class LedgerServiceTest {
     }
 
     @Test
-    @DisplayName("a transfer moves money and leaves the total unchanged")
-    void postsBalancedTransfer() {
+    void transferMovesMoneyAndLeavesTheTotalUnchanged() {
         ledger.post("alice pays bob 50", List.of(
                 new Entry(alice, -5000),
                 new Entry(bob, 5000)));
@@ -62,8 +60,7 @@ class LedgerServiceTest {
     }
 
     @Test
-    @DisplayName("a failure partway through leaves nothing behind")
-    void rollsBackOnFailure() {
+    void failurePartwayThroughLeavesNothingBehind() {
         long unknownAccount = 999_999L;
 
         assertThatThrownBy(() -> ledger.post("transfer to nobody", List.of(
@@ -71,25 +68,24 @@ class LedgerServiceTest {
                 new Entry(unknownAccount, 5000))))
                 .isInstanceOf(DataIntegrityViolationException.class);
 
-        // the transactions row was written before the failing entry. if the rollback
-        // did not work, an orphan transaction would be sitting here.
+        // the transactions row goes in before the failing entry, so an orphan
+        // would be sitting here if the rollback did not work
         assertThat(countRows("transactions")).isZero();
         assertThat(countRows("entries")).isZero();
         assertThat(ledger.balanceOf(alice)).isZero();
     }
 
+    // bypasses the service to prove the database enforces the invariant on its own
     @Test
-    @DisplayName("the database refuses an unbalanced write even if the service does not")
-    void databaseEnforcesTheInvariant() {
+    void databaseRejectsAnUnbalancedWrite() {
         Long transactionId = jdbc.queryForObject(
                 "INSERT INTO transactions (description) VALUES ('bypassing the service') RETURNING id",
                 Long.class);
 
-        assertThatThrownBy(() -> {
-            jdbc.update("INSERT INTO entries (transaction_id, account_id, amount_minor) VALUES (?, ?, ?)",
-                    transactionId, alice, -5000);
-            // the deferred trigger fires when this statement's transaction commits
-        }).isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbc.update(
+                "INSERT INTO entries (transaction_id, account_id, amount_minor) VALUES (?, ?, ?)",
+                transactionId, alice, -5000))
+                .isInstanceOf(DataIntegrityViolationException.class);
     }
 
     private long totalOfAllEntries() {

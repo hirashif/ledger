@@ -1,8 +1,7 @@
 JAVA_HOME ?= $(shell /usr/libexec/java_home -v 21 2>/dev/null)
 export JAVA_HOME
 
-# colima keeps its socket outside the default location, and testcontainers needs to be
-# told where it is. override these if you run docker desktop instead.
+# colima puts its socket outside the default path. override if you run docker desktop.
 DOCKER_HOST ?= unix://$(HOME)/.colima/default/docker.sock
 TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE ?= /var/run/docker.sock
 export DOCKER_HOST

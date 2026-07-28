@@ -4,14 +4,11 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
-import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-/** Pure validation rules. No Spring, no database, runs in milliseconds. */
 class LedgerValidationTest {
 
     @Test
-    @DisplayName("a balanced two-sided transfer is accepted")
     void acceptsBalancedTransfer() {
         assertThatCode(() -> LedgerService.validate(List.of(
                 new Entry(1, -5000),
@@ -20,8 +17,7 @@ class LedgerValidationTest {
     }
 
     @Test
-    @DisplayName("one debit split across two credits is accepted")
-    void acceptsSplitTransfer() {
+    void acceptsOneDebitSplitAcrossTwoCredits() {
         assertThatCode(() -> LedgerService.validate(List.of(
                 new Entry(1, -5000),
                 new Entry(2, 3000),
@@ -42,7 +38,6 @@ class LedgerValidationTest {
     }
 
     @Test
-    @DisplayName("a single entry is never a transfer, even if it is somehow zero-sum")
     void rejectsSingleEntry() {
         assertThatThrownBy(() -> LedgerService.validate(List.of(new Entry(1, -5000))))
                 .isInstanceOf(UnbalancedTransactionException.class);
@@ -64,11 +59,9 @@ class LedgerValidationTest {
                 .isInstanceOf(UnbalancedTransactionException.class);
     }
 
+    // a naive running sum wraps around here and lands on zero, so it reads as balanced
     @Test
-    @DisplayName("overflow must not fake a balanced transaction")
     void rejectsOverflow() {
-        // a naive running sum wraps around here and lands on exactly zero,
-        // so a careless implementation accepts this as a valid transfer.
         assertThatThrownBy(() -> LedgerService.validate(List.of(
                 new Entry(1, Long.MAX_VALUE),
                 new Entry(2, Long.MAX_VALUE),
