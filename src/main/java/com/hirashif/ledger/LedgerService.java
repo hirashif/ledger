@@ -43,6 +43,41 @@ public class LedgerService {
         return transactionId;
     }
 
+    // rejects a transfer that would overdraw an account
+    @Transactional
+    public long postSolvent(String description, List<Entry> entries) {
+        validate(entries);
+
+        // lock every account being debited before reading its balance, otherwise two
+        // transfers both read the old balance and both decide they can afford it.
+        // ascending id order so two transfers over the same pair cannot deadlock.
+        entries.stream()
+                .filter(entry -> entry.amountMinor() < 0)
+                .map(Entry::accountId)
+                .distinct()
+                .sorted()
+                .forEach(accountId -> jdbc.queryForObject(
+                        "SELECT id FROM accounts WHERE id = ? FOR UPDATE", Long.class, accountId));
+
+        for (Entry entry : entries) {
+            if (entry.amountMinor() >= 0 || allowsOverdraft(entry.accountId())) {
+                continue;
+            }
+            long balance = balanceOf(entry.accountId());
+            if (balance + entry.amountMinor() < 0) {
+                throw new InsufficientFundsException("account " + entry.accountId()
+                        + " has " + balance + " and cannot move " + entry.amountMinor());
+            }
+        }
+
+        return post(description, entries);
+    }
+
+    private boolean allowsOverdraft(long accountId) {
+        return Boolean.TRUE.equals(jdbc.queryForObject(
+                "SELECT allows_overdraft FROM accounts WHERE id = ?", Boolean.class, accountId));
+    }
+
     public long balanceOf(long accountId) {
         Long balance = jdbc.queryForObject(
                 "SELECT COALESCE(SUM(amount_minor), 0) FROM entries WHERE account_id = ?",
