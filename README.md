@@ -9,13 +9,14 @@ every balance from history to catch the cache lying. Java 21, Spring Boot, plain
 Flyway migrations, Testcontainers.
 
 ## Why I built this
-I worked on payroll software for two years, which is a domain where being off by a cent is
-a real problem, and I wanted to understand the accounting core underneath that properly
-rather than by analogy. Double-entry is 500 years old and every fintech company still runs
-on it. Building one is also the fastest way to run into the problems that make money code
-hard: retries that must not double charge, two withdrawals racing over the same balance,
-and a cached number that quietly stops matching the history it came from. Each of those is
-a commit in here.
+I spent two years on payroll software, where being off by a cent is a real problem. I never
+had to touch the accounting core underneath, and I wanted to actually understand it. Double
+entry is 500 years old and every fintech company still runs on it.
+
+It also turned out to be the fastest way to hit the problems that make money code hard.
+Retries that must not double charge. Two withdrawals racing over one balance. A cached
+number that quietly stops matching the history it came from. Each of those is a commit here,
+and two of them I got wrong first.
 
 ```mermaid
 flowchart LR
@@ -92,11 +93,11 @@ exactly zero and a naive running total would call that transaction balanced.
 A single mutable number tells you what an account holds but never why, cannot be audited,
 and cannot answer what the balance was last Tuesday.
 
-**The zero-sum rule is a deferred constraint trigger.** Entries are inserted one at a time,
-so a per-statement check would reject a valid transfer the moment the first leg lands and
-the sum is temporarily nonzero. `DEFERRABLE INITIALLY DEFERRED` moves the check to `COMMIT`,
-once every entry is in. The trigger raises with `ERRCODE = 'check_violation'` so it arrives
-as a normal integrity violation instead of an opaque `P0001` the application cannot classify.
+**The zero-sum rule is a deferred constraint trigger.** Entries go in one at a time. A
+per-statement check would reject a valid transfer the moment the first leg lands, since the
+sum is briefly nonzero. `DEFERRABLE INITIALLY DEFERRED` moves the check to `COMMIT`, after
+every entry is in. It raises with `ERRCODE = 'check_violation'` so the app sees a normal
+integrity violation rather than an opaque `P0001` it cannot classify.
 
 **Entries are append-only, enforced by trigger.** Corrections are reversing transactions, not
 edits. The first thing this broke was the test suite's own cleanup, since `DELETE` trips the
@@ -116,11 +117,11 @@ two transfers over the same pair cannot deadlock. Pessimistic locking suits mone
 than optimistic retries here, since a conflict means a real overdraft decision.
 
 **Balances are cached, so reconciliation exists.** `accounts.balance_minor` is written in the
-same transaction as the entries, making the read path one column instead of an O(n) sum. That
-is two sources of truth and they can drift, so `GET /reconciliation` rebuilds every balance
-from history and reports mismatches, and a test deliberately corrupts a cached balance to
-prove it gets caught. `repair()` rewrites the cache from entries, but production should alert
-before self-healing: silent repair hides whatever caused the drift.
+same transaction as the entries, so a read is one column instead of an O(n) sum. That leaves
+two sources of truth, and they can drift. `GET /reconciliation` rebuilds every balance from
+history and reports the mismatches. A test corrupts a cached balance on purpose to prove it
+gets caught. `repair()` rewrites the cache from entries, but production should alert before
+self-healing, since silent repair hides whatever caused the drift.
 
 ## Tests
 34 tests, all against a real Postgres via Testcontainers. The two worth reading:

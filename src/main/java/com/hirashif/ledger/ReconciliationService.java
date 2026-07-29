@@ -5,10 +5,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/**
- * Two things claim to know an account's balance: the cached column and the entries
- * it was derived from. Anything with a cache needs something that checks the cache.
- */
+// the cached balance and the entries it came from can disagree. this finds out.
 @Service
 public class ReconciliationService {
 
@@ -45,11 +42,8 @@ public class ReconciliationService {
                         rs.getLong("computed")));
     }
 
-    /**
-     * Entries are the source of truth, so repair always means rewriting the cache.
-     * In production this would alert first: silent self-healing hides the bug that
-     * caused the drift in the first place.
-     */
+    // entries are the source of truth, so repair means rewriting the cache.
+    // production should alert first, silent self-healing hides the real bug.
     @Transactional
     public int repair() {
         return jdbc.update("""

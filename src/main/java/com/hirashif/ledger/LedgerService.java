@@ -37,11 +37,8 @@ public class LedgerService {
         return transactionId;
     }
 
-    /**
-     * Solvency checked and idempotent. The key is claimed before any of the business
-     * rules run, so a replayed request is answered as a replay even when its body is
-     * something we would otherwise reject.
-     */
+    // solvency checked and idempotent. the key is claimed before any business rule
+    // runs, so a replay is answered as a replay even if its body would be rejected.
     @Transactional
     public long postWithKey(String key, String requestHash, String description,
             List<Entry> entries) {

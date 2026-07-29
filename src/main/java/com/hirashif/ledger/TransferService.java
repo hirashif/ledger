@@ -23,14 +23,9 @@ public class TransferService {
         this.jdbc = jdbc;
     }
 
-    /**
-     * Posts a transfer at most once for a given key. A retry returns the original
-     * transaction id instead of moving money again.
-     *
-     * There is deliberately no "does this key exist yet" check first. Two retries
-     * racing would both find nothing and both post. The primary key is what decides
-     * the winner, so the loser finds out by failing the insert.
-     */
+    // at most once per key. a retry gets the original transaction id back.
+    // no "does this key exist" check first: two retries racing would both find
+    // nothing and both post. let the primary key pick the winner instead.
     public long transfer(String key, String description, List<Entry> entries) {
         String hash = requestHash(description, entries);
         try {
