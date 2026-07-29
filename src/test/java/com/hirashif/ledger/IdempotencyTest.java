@@ -37,6 +37,7 @@ class IdempotencyTest {
     @Autowired
     JdbcTemplate jdbc;
 
+    long world;
     long alice;
     long bob;
 
@@ -44,14 +45,18 @@ class IdempotencyTest {
     void setUp() {
         jdbc.execute("TRUNCATE idempotency_keys, entries, transactions, accounts "
                 + "RESTART IDENTITY CASCADE");
-        alice = newAccount("alice");
-        bob = newAccount("bob");
+        world = newAccount("world", true);
+        alice = newAccount("alice", false);
+        bob = newAccount("bob", false);
+        // transfers are solvency checked now, so alice needs money to send
+        ledger.post("open alice", List.of(new Entry(world, -50000), new Entry(alice, 50000)));
     }
 
-    private long newAccount(String name) {
+    private long newAccount(String name, boolean allowsOverdraft) {
         return jdbc.queryForObject(
-                "INSERT INTO accounts (name, currency) VALUES (?, 'USD') RETURNING id",
-                Long.class, name);
+                "INSERT INTO accounts (name, currency, allows_overdraft) VALUES (?, 'USD', ?) "
+                        + "RETURNING id",
+                Long.class, name, allowsOverdraft);
     }
 
     private List<Entry> fiftyDollars() {
@@ -65,7 +70,7 @@ class IdempotencyTest {
 
         assertThat(second).isEqualTo(first);
         assertThat(ledger.balanceOf(bob)).isEqualTo(5000);
-        assertThat(countRows("transactions")).isEqualTo(1);
+        assertThat(countRows("transactions")).isEqualTo(2); // the funding one plus this transfer
     }
 
     @Test
@@ -74,7 +79,7 @@ class IdempotencyTest {
         transfers.transfer("req-2", "alice pays bob 50 again", fiftyDollars());
 
         assertThat(ledger.balanceOf(bob)).isEqualTo(10000);
-        assertThat(countRows("transactions")).isEqualTo(2);
+        assertThat(countRows("transactions")).isEqualTo(3);
     }
 
     @Test
@@ -108,7 +113,7 @@ class IdempotencyTest {
         assertThat(pool.awaitTermination(30, TimeUnit.SECONDS)).isTrue();
 
         assertThat(returned).hasSize(1);
-        assertThat(countRows("transactions")).isEqualTo(1);
+        assertThat(countRows("transactions")).isEqualTo(2);
         assertThat(ledger.balanceOf(bob)).isEqualTo(5000);
     }
 

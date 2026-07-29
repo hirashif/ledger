@@ -1,6 +1,7 @@
 package com.hirashif.ledger;
 
 import java.util.List;
+import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -14,35 +15,14 @@ public class LedgerService {
         this.jdbc = jdbc;
     }
 
-    // writes a transaction and all of its entries, or none of them
+    // writes a transaction and all of its entries, or none of them.
+    // package private on purpose: this skips the solvency check, so it is not
+    // something a caller outside the ledger should be able to reach.
     @Transactional
-    public long post(String description, List<Entry> entries) {
+    long post(String description, List<Entry> entries) {
         validate(entries);
-
-        Long transactionId = jdbc.queryForObject(
-                "INSERT INTO transactions (description) VALUES (?) RETURNING id",
-                Long.class, description);
-
-        for (Entry entry : entries) {
-            jdbc.update(
-                    "INSERT INTO entries (transaction_id, account_id, amount_minor) VALUES (?, ?, ?)",
-                    transactionId, entry.accountId(), entry.amountMinor());
-            // same transaction as the entry, so the cache cannot drift on this path
-            jdbc.update("UPDATE accounts SET balance_minor = balance_minor + ? WHERE id = ?",
-                    entry.amountMinor(), entry.accountId());
-        }
-
-        return transactionId;
-    }
-
-    // same as post, but claims the idempotency key in the same transaction.
-    // a duplicate key blows up the whole thing, which is the point.
-    @Transactional
-    public long postWithKey(String key, String requestHash, String description, List<Entry> entries) {
-        long transactionId = post(description, entries);
-        jdbc.update(
-                "INSERT INTO idempotency_keys (key, request_hash, transaction_id) VALUES (?, ?, ?)",
-                key, requestHash, transactionId);
+        long transactionId = newTransaction(description);
+        writeEntries(transactionId, entries);
         return transactionId;
     }
 
@@ -50,10 +30,46 @@ public class LedgerService {
     @Transactional
     public long postSolvent(String description, List<Entry> entries) {
         validate(entries);
+        long transactionId = newTransaction(description);
+        lockDebitedAccounts(entries);
+        assertSolvent(entries);
+        writeEntries(transactionId, entries);
+        return transactionId;
+    }
 
-        // lock every account being debited before reading its balance, otherwise two
-        // transfers both read the old balance and both decide they can afford it.
-        // ascending id order so two transfers over the same pair cannot deadlock.
+    /**
+     * Solvency checked and idempotent. The key is claimed before any of the business
+     * rules run, so a replayed request is answered as a replay even when its body is
+     * something we would otherwise reject.
+     */
+    @Transactional
+    public long postWithKey(String key, String requestHash, String description,
+            List<Entry> entries) {
+        validate(entries);
+        long transactionId = newTransaction(description);
+        claimKey(key, requestHash, transactionId);
+        lockDebitedAccounts(entries);
+        assertSolvent(entries);
+        writeEntries(transactionId, entries);
+        return transactionId;
+    }
+
+    private long newTransaction(String description) {
+        return jdbc.queryForObject(
+                "INSERT INTO transactions (description) VALUES (?) RETURNING id",
+                Long.class, description);
+    }
+
+    // a duplicate key trips the primary key here and takes the whole transaction down
+    private void claimKey(String key, String requestHash, long transactionId) {
+        jdbc.update("INSERT INTO idempotency_keys (key, request_hash, transaction_id) "
+                + "VALUES (?, ?, ?)", key, requestHash, transactionId);
+    }
+
+    // lock before reading any balance, otherwise two transfers both read the old
+    // balance and both decide they can afford it. ascending id order so two
+    // transfers over the same pair of accounts cannot deadlock against each other.
+    private void lockDebitedAccounts(List<Entry> entries) {
         entries.stream()
                 .filter(entry -> entry.amountMinor() < 0)
                 .map(Entry::accountId)
@@ -61,7 +77,9 @@ public class LedgerService {
                 .sorted()
                 .forEach(accountId -> jdbc.queryForObject(
                         "SELECT id FROM accounts WHERE id = ? FOR UPDATE", Long.class, accountId));
+    }
 
+    private void assertSolvent(List<Entry> entries) {
         for (Entry entry : entries) {
             if (entry.amountMinor() >= 0 || allowsOverdraft(entry.accountId())) {
                 continue;
@@ -72,13 +90,55 @@ public class LedgerService {
                         + " has " + balance + " and cannot move " + entry.amountMinor());
             }
         }
+    }
 
-        return post(description, entries);
+    private void writeEntries(long transactionId, List<Entry> entries) {
+        for (Entry entry : entries) {
+            jdbc.update(
+                    "INSERT INTO entries (transaction_id, account_id, amount_minor) VALUES (?, ?, ?)",
+                    transactionId, entry.accountId(), entry.amountMinor());
+            // same transaction as the entry, so the cache cannot drift on this path
+            jdbc.update("UPDATE accounts SET balance_minor = balance_minor + ? WHERE id = ?",
+                    entry.amountMinor(), entry.accountId());
+        }
     }
 
     private boolean allowsOverdraft(long accountId) {
         return Boolean.TRUE.equals(jdbc.queryForObject(
                 "SELECT allows_overdraft FROM accounts WHERE id = ?", Boolean.class, accountId));
+    }
+
+    public long createAccount(String name, String currency, boolean allowsOverdraft) {
+        return jdbc.queryForObject(
+                "INSERT INTO accounts (name, currency, allows_overdraft) VALUES (?, ?, ?) "
+                        + "RETURNING id",
+                Long.class, name, currency, allowsOverdraft);
+    }
+
+    public Optional<Account> findAccount(long accountId) {
+        return jdbc.query(
+                "SELECT id, name, currency, balance_minor, allows_overdraft FROM accounts "
+                        + "WHERE id = ?",
+                (rs, row) -> new Account(
+                        rs.getLong("id"),
+                        rs.getString("name"),
+                        rs.getString("currency"),
+                        rs.getLong("balance_minor"),
+                        rs.getBoolean("allows_overdraft")),
+                accountId).stream().findFirst();
+    }
+
+    public List<PostedEntry> entriesFor(long accountId, int limit) {
+        return jdbc.query(
+                "SELECT id, transaction_id, account_id, amount_minor, created_at FROM entries "
+                        + "WHERE account_id = ? ORDER BY id DESC LIMIT ?",
+                (rs, row) -> new PostedEntry(
+                        rs.getLong("id"),
+                        rs.getLong("transaction_id"),
+                        rs.getLong("account_id"),
+                        rs.getLong("amount_minor"),
+                        rs.getTimestamp("created_at").toInstant()),
+                accountId, limit);
     }
 
     // the cached column
