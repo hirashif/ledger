@@ -14,7 +14,14 @@ flowchart LR
   R["ReconciliationService"] -->|"rebuild from entries"| DB
 ```
 
-<!-- TODO(shifan): why you built this, a few sentences in your own words -->
+## Why I built this
+Took a Bitcoin protocol class in college and wanted to actually see what my professor was
+talking about, and pick up more of the fintech side while I was at it. Double entry is the
+thing sitting under all of it and I'd never written one.
+
+The tests were the annoying part. Getting Testcontainers to talk to Colima took longer than
+any of the ledger code, and the concurrency bug wouldn't reproduce with twenty threads no
+matter how many times I ran it. Ended up driving two connections by hand to catch it.
 
 ## Tables
 | table | holds |
