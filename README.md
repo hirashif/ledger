@@ -83,45 +83,46 @@ $ curl -s localhost:8080/transfers -X POST -H 'Idempotency-Key: overdraw' ... # 
 ```
 
 ## Design notes
-The decisions worth explaining, and what they cost.
+A few decisions worth calling out.
 
-**Money is `BIGINT` minor units, never a float.** Cents, not dollars. Validation sums with
-`Math.addExact` rather than `+=`, because `Long.MAX_VALUE + Long.MAX_VALUE + 2` wraps to
-exactly zero and a naive running total would call that transaction balanced.
+**Amounts are `BIGINT` cents.** No floats anywhere near money. Validation sums with
+`Math.addExact` instead of `+=`, which matters more than it sounds: `Long.MAX_VALUE +
+Long.MAX_VALUE + 2` wraps around to exactly zero, so a plain running total would look at
+that and call it balanced.
 
-**No balance column as the source of truth.** A balance is the sum of an account's entries.
-A single mutable number tells you what an account holds but never why, cannot be audited,
-and cannot answer what the balance was last Tuesday.
+**Balances come from entries.** A mutable balance column gives you the number without any
+record of how it got there, which falls apart the first time someone asks where their
+money went.
 
-**The zero-sum rule is a deferred constraint trigger.** Entries go in one at a time. A
-per-statement check would reject a valid transfer the moment the first leg lands, since the
-sum is briefly nonzero. `DEFERRABLE INITIALLY DEFERRED` moves the check to `COMMIT`, after
-every entry is in. It raises with `ERRCODE = 'check_violation'` so the app sees a normal
-integrity violation rather than an opaque `P0001` it cannot classify.
+**The zero-sum check is a deferred trigger.** Entries insert one at a time, so checking
+after each row rejects a valid transfer the moment the first leg lands. `DEFERRABLE
+INITIALLY DEFERRED` runs the check at `COMMIT` instead. It raises with
+`ERRCODE = 'check_violation'`, so Spring maps it to a normal integrity violation instead of
+the opaque `P0001` you get from a bare `RAISE`.
 
-**Entries are append-only, enforced by trigger.** Corrections are reversing transactions, not
-edits. The first thing this broke was the test suite's own cleanup, since `DELETE` trips the
-trigger; tests `TRUNCATE` instead, which does not fire row-level triggers.
+**Entries are append-only.** Mistakes get fixed by posting a reversing transaction. The
+first thing this broke was my own test cleanup, since `DELETE` trips the trigger. Tests
+`TRUNCATE` now.
 
-**Idempotency is a primary key, not a lookup.** There is deliberately no "has this key been
-used" check before inserting: two retries arriving together would both see nothing and both
-post. The insert is attempted and the primary key picks the winner, so the loser fails and
-replays the original result. A stored request hash means the same key with a different body
-is a `409` rather than a silently wrong success. The key is claimed **before** any business
-rule runs, so a replay is answered as a replay even if its body would have been rejected.
+**Idempotency leans on the primary key.** I don't check whether a key exists before
+inserting it. Two retries landing together would both find nothing and both post. So the
+insert just runs, the primary key sorts out who wins, and the loser replays the original
+result. The stored request hash covers the other case: same key, different body, which is a
+client bug and gets a 409. The key is claimed before any business rule runs, so a replay
+stays a replay even when its body would have been rejected.
 
-**Solvency checks lock first, in id order.** Reading a balance and then writing is a lost
-update: both transfers see $100, both approve $80, the account lands at -$60. Every debited
-account is locked with `SELECT ... FOR UPDATE` before any balance is read, sorted by id so
-two transfers over the same pair cannot deadlock. Pessimistic locking suits money better
-than optimistic retries here, since a conflict means a real overdraft decision.
+**Locks go before balance reads, ordered by account id.** Read-then-write on a balance is a
+lost update. Both transfers see $100, both approve $80, the account ends at -$60. So every
+debited account gets `SELECT ... FOR UPDATE` first, and the id ordering is what keeps two
+transfers over the same pair from deadlocking. I went pessimistic instead of optimistic here
+because a conflict is a real overdraft decision, not something worth retrying.
 
-**Balances are cached, so reconciliation exists.** `accounts.balance_minor` is written in the
-same transaction as the entries, so a read is one column instead of an O(n) sum. That leaves
-two sources of truth, and they can drift. `GET /reconciliation` rebuilds every balance from
-history and reports the mismatches. A test corrupts a cached balance on purpose to prove it
-gets caught. `repair()` rewrites the cache from entries, but production should alert before
-self-healing, since silent repair hides whatever caused the drift.
+**The cached balance needs a reconciler.** `accounts.balance_minor` is written alongside the
+entries, so a read is one column instead of summing all of history. That's two sources of
+truth and they can drift. `GET /reconciliation` rebuilds everything from entries and reports
+what disagrees. A test corrupts a balance on purpose to make sure that works. `repair()`
+exists too, but production should alert before self-healing, since fixing it quietly hides
+whatever broke it.
 
 ## Tests
 34 tests, all against a real Postgres via Testcontainers. The two worth reading:
