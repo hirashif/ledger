@@ -78,8 +78,9 @@
         <artifactId>maven-surefire-plugin</artifactId>
         <configuration>
           <systemPropertyVariables>
-            <!-- docker-java defaults to api 1.32, modern daemons want 1.40+ -->
-            <api.version>1.44</api.version>
+            <!-- docker-java defaults to api 1.32, modern daemons want 1.40+.
+                 1.41 is high enough for those and low enough for older CI runners. -->
+            <api.version>1.41</api.version>
           </systemPropertyVariables>
         </configuration>
       </plugin>
