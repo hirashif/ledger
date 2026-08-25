@@ -1,17 +1,23 @@
 # Deploying the ledger
 
-Live at **https://shifan-ledger.fly.dev** — Swagger UI at `/swagger-ui/index.html`.
-Running on Fly.io (`shifan-ledger`, dfw, one shared-cpu-1x/512MB machine) against Neon Postgres.
+Live at **https://ledger-75986543116.us-central1.run.app** — Swagger UI at `/swagger-ui/index.html`.
+Google Cloud Run (project `ledger-demo-506601`, us-central1, 512MB, scale to zero) against Neon Postgres.
+Free tier covers this: 2M requests, 180k vCPU-seconds and 360k GiB-seconds a month.
 
 The app reads `DB_URL`, `DB_USER`, `DB_PASSWORD` and binds to `$PORT`. Flyway runs the migrations
 on first boot, so the schema builds itself against an empty database.
 
 ## Redeploying
 ```
-fly deploy --remote-only
+gcloud run deploy ledger --source . --region us-central1 --allow-unauthenticated --memory 512Mi
 ```
-`--remote-only` matters: Fly's nodes are amd64, and building on an Apple Silicon Mac produces
-arm64 images that fail to start once they're in the cluster.
+Cloud Build builds the image on Google's side, so the arm64/amd64 mismatch you get from building
+on an Apple Silicon Mac never comes up.
+
+On a fresh project the first deploy fails with `PERMISSION_DENIED ... default service account is
+missing required IAM permissions`. Google tightened the Cloud Build defaults. Grant the compute
+service account `roles/cloudbuild.builds.builder`, `roles/storage.objectViewer`,
+`roles/artifactregistry.writer` and `roles/logging.logWriter`, then deploy again.
 
 ## Database
 Neon free tier. Two things to get right in the connection string:
@@ -27,11 +33,17 @@ Secrets live in Fly, not in this repo:
 fly secrets set DB_URL=... DB_USER=... DB_PASSWORD=...
 ```
 
-## Why it's always on
-`min_machines_running = 1` and `auto_stop_machines = false`. With scale-to-zero the machine stops
-rather than suspends, and a cold hit measured **10.3 seconds** (full boot plus Spring startup plus
-Neon waking). Warm responses are 0.1-0.3s. For a link that's meant to be clicked by someone reading
-a resume, ten seconds reads as broken, so it stays warm. Costs a few dollars a month.
+## Cold starts
+Scale to zero, so the first request after idle pays for Spring starting up. Measured **3.3 seconds**
+cold, 0.09-0.16s warm. The Dockerfile sets `-XX:+UseSerialGC -XX:TieredStopAtLevel=1
+-Dspring.main.lazy-initialization=true`, which roughly halves it. Setting `--min-instances 1` would
+remove it entirely but leaves the free tier.
+
+## /healthz vs /health
+Google's frontend reserves the exact path `/healthz` on Cloud Run and answers it with its own 404
+before the request reaches the container. `/healthz/` with a trailing slash goes through, and so
+does every other path. The controller maps both `/healthz` and `/health` so the endpoint is
+reachable wherever it runs.
 
 ## Seeding a fresh database
 An empty ledger is a bad demo. Three accounts and two transfers:

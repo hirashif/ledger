@@ -72,7 +72,9 @@ public class LedgerController {
         return reconciliation.findDrift();
     }
 
-    @GetMapping("/healthz")
+    // /health as well as /healthz: Google's frontend reserves the exact path
+    // /healthz on Cloud Run and answers it before the request reaches the container
+    @GetMapping({ "/healthz", "/health" })
     public Map<String, String> healthz() {
         return Map.of("status", "ok");
     }

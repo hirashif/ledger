@@ -2,7 +2,7 @@
 
 [![ci](https://github.com/hirashif/ledger/actions/workflows/ci.yml/badge.svg)](https://github.com/hirashif/ledger/actions/workflows/ci.yml)
 
-**Live API docs:** https://shifan-ledger.fly.dev/swagger-ui/index.html (seeded with a few accounts and transfers, so the endpoints return real data)
+**Live API docs:** https://ledger-75986543116.us-central1.run.app/swagger-ui/index.html (seeded with a few accounts and transfers, so the endpoints return real data)
 
 Double-entry ledger service in Java. Every transaction has to balance, entries are append-only,
 balances are derived from history. Spring Boot, Postgres, plain SQL, Flyway, Testcontainers.
