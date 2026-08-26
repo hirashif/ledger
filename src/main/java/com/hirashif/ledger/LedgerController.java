@@ -72,6 +72,15 @@ public class LedgerController {
         return reconciliation.findDrift();
     }
 
+    // the resume and readme print the bare host or /swagger-ui; both should land
+    // on the docs instead of a whitelabel 404
+    @GetMapping({ "/", "/swagger-ui" })
+    public ResponseEntity<Void> docs() {
+        return ResponseEntity.status(HttpStatus.FOUND)
+                .location(java.net.URI.create("/swagger-ui/index.html"))
+                .build();
+    }
+
     // /health as well as /healthz: Google's frontend reserves the exact path
     // /healthz on Cloud Run and answers it before the request reaches the container
     @GetMapping({ "/healthz", "/health" })
