@@ -45,7 +45,7 @@ Java 21 and a docker daemon ([colima](https://github.com/abiosoft/colima) here).
 ```bash
 make up      # postgres
 make run     # migrates, listens on 8080
-make test    # 34 tests against real postgres
+make test    # 35 tests against real postgres
 make psql
 make down
 ```
@@ -83,7 +83,8 @@ $ curl -s -X POST localhost:8080/transfers -H 'Idempotency-Key: overdraw' ...
 - Append-only broke my test cleanup before anything else. `DELETE` trips the trigger, tests `TRUNCATE`.
 - No "does this key exist" check on idempotency. Two retries would both find nothing and both post. Insert and let the primary key decide; loser replays. Request hash catches same key + different body (409).
 - Key is claimed before any business rule runs, so a replay stays a replay even if the body is bad.
-- `SELECT ... FOR UPDATE` on every debited account before reading a balance, ordered by id. Otherwise both transfers see $100, both approve $80, account lands at -$60. Ordering avoids deadlock.
+- `SELECT ... FOR UPDATE` on every account in the transaction before reading a balance, ordered by id. Otherwise both transfers see $100, both approve $80, account lands at -$60.
+- I first locked only the debited accounts. The credit side takes a row lock too when its entry is written, so A->B and B->A deadlocked: about half of 600 opposite transfers were aborted by Postgres. Locking both sides in id order fixed it, and `OppositeTransferTest` keeps it fixed.
 - `balance_minor` is cached in the same transaction as the entries, so two sources of truth. `/reconciliation` rebuilds from entries and reports drift. A test corrupts a balance on purpose to check it.
 - `LostUpdateTest` drives two connections by hand. Twenty threads never reproduced the race.
 

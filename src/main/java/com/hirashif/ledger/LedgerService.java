@@ -31,7 +31,7 @@ public class LedgerService {
     public long postSolvent(String description, List<Entry> entries) {
         validate(entries);
         long transactionId = newTransaction(description);
-        lockDebitedAccounts(entries);
+        lockAccounts(entries);
         assertSolvent(entries);
         writeEntries(transactionId, entries);
         return transactionId;
@@ -45,7 +45,7 @@ public class LedgerService {
         validate(entries);
         long transactionId = newTransaction(description);
         claimKey(key, requestHash, transactionId);
-        lockDebitedAccounts(entries);
+        lockAccounts(entries);
         assertSolvent(entries);
         writeEntries(transactionId, entries);
         return transactionId;
@@ -64,11 +64,12 @@ public class LedgerService {
     }
 
     // lock before reading any balance, otherwise two transfers both read the old
-    // balance and both decide they can afford it. ascending id order so two
-    // transfers over the same pair of accounts cannot deadlock against each other.
-    private void lockDebitedAccounts(List<Entry> entries) {
+    // balance and both decide they can afford it. every account in the transaction
+    // is locked, not only the debited ones: the credit side takes a row lock too
+    // when its entry is written, so a->b and b->a each held one account and waited
+    // on the other. ascending id order means they queue instead.
+    private void lockAccounts(List<Entry> entries) {
         entries.stream()
-                .filter(entry -> entry.amountMinor() < 0)
                 .map(Entry::accountId)
                 .distinct()
                 .sorted()
